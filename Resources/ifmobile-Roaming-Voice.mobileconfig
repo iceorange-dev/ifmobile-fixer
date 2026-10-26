@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>PayloadContent</key>
+	<array>
+		<dict>
+			<key>APNs</key>
+			<array>
+				<dict>
+					<key>Name</key>
+					<string>ims</string>
+					<key>AllowedProtocolMask</key>
+					<integer>2</integer>
+					<key>AllowedProtocolMaskInRoaming</key>
+					<integer>2</integer>
+					<key>AllowedProtocolMaskInDomesticRoaming</key>
+					<integer>2</integer>
+					<key>EnableXLAT464</key>
+					<false/>
+				</dict>
+			</array>
+			<key>PayloadDisplayName</key>
+			<string>ifmobile 漫遊語音 APN</string>
+			<key>PayloadIdentifier</key>
+			<string>com.iceorange.ifmobile.test-i.native-ims.cellular</string>
+			<key>PayloadOrganization</key>
+			<string>個人修復工具</string>
+			<key>PayloadType</key>
+			<string>com.apple.cellular</string>
+			<key>PayloadUUID</key>
+			<string>5B10DD71-33CA-461D-81A0-536730BCA51F</string>
+			<key>PayloadVersion</key>
+			<integer>1</integer>
+			<key>PayloadDescription</key>
+			<string>ifmobile 語音連線設定。</string>
+		</dict>
+	</array>
+	<key>PayloadDisplayName</key>
+	<string>ifmobile 漫遊語音設定</string>
+	<key>PayloadIdentifier</key>
+	<string>com.iceorange.ifmobile.test-i</string>
+	<key>PayloadRemovalDisallowed</key>
+	<false/>
+	<key>PayloadType</key>
+	<string>Configuration</string>
+	<key>PayloadUUID</key>
+	<string>30797C7B-3F3A-45A6-B085-313FBE92B1DA</string>
+	<key>PayloadVersion</key>
+	<integer>1</integer>
+	<key>PayloadDescription</key>
+	<string>ifmobile 漫遊語音設定。</string>
+	<key>PayloadOrganization</key>
+	<string>個人修復工具</string>
+</dict>
+</plist>

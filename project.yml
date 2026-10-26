@@ -1,0 +1,34 @@
+name: IFMobileHelper
+options:
+  deploymentTarget:
+    iOS: "18.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0.4"
+    CURRENT_PROJECT_VERSION: "5"
+    TARGETED_DEVICE_FAMILY: "1"
+    CODE_SIGNING_ALLOWED: NO
+    ENABLE_DEBUG_DYLIB: NO
+    EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64
+targets:
+  IFMobileHelper:
+    type: application
+    platform: iOS
+    sources:
+      - path: ios-app
+      - path: Resources
+        buildPhase: resources
+      - path: licenses
+        buildPhase: resources
+    dependencies:
+      - framework: AirliftFFI.xcframework
+        embed: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.iceorange.ifmobilehelper
+        PRODUCT_NAME: IFMobileHelper
+        INFOPLIST_FILE: ios-app/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        OTHER_LDFLAGS: "-lc++ -Wl,-u,_ALGetGrappaToken"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
