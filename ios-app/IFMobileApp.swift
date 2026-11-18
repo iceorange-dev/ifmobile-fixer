@@ -12,11 +12,25 @@ func ALGetGrappaToken(_ version: UInt32, _ device: UInt32, _ protocolVersion: UI
 
 struct CarrierRow: Decodable, Identifiable {
     var slot: String; var mcc: String; var mnc: String; var bundle: String; var version: String
+    /// Set by the core for the SIM this app has repaired before on this phone.
+    var ifmobile: Bool?
     var id: String { slot }
-    var title: String { mcc == "440" ? "日本 ifmobile" : mcc == "466" ? "台灣門號" : "門號 \(slot)" }
+    /// ifmobile is a Docomo MVNO. Other Japanese SIMs (KDDI, SoftBank, Rakuten) are never the target.
+    var docomo: Bool { mcc == "440" && mnc == "10" }
+    /// A Docomo-network SIM on the KDDI donor bundle can only be this app's repair.
+    var repaired: Bool { docomo && bundle.contains("KDDI_BIGLOBE") }
     var detail: String { bundle.replacingOccurrences(of: "com.apple.", with: "") + " · " + version }
 }
-struct CarrierReport: Decodable { var model: String; var ios: String; var build: String; var carriers: [CarrierRow]; var operation: String? }
+struct CarrierReport: Decodable {
+    var model: String; var ios: String; var build: String; var carriers: [CarrierRow]; var operation: String?
+    func title(_ row: CarrierRow) -> String {
+        // Prefer the SIM with repair history. Without any, each Docomo 44010 SIM is only a candidate.
+        let known = carriers.contains { $0.ifmobile == true }
+        if row.ifmobile == true || (!known && row.docomo) { return "日本 ifmobile" }
+        if row.mcc == "440" { return "日本門號" }
+        return row.mcc == "466" ? "台灣門號" : "門號 \(row.slot)"
+    }
+}
 @MainActor final class CarrierModel: ObservableObject {
     @Published var busy = false
     @Published var progress = "準備就緒"
@@ -29,6 +43,8 @@ struct CarrierReport: Decodable { var model: String; var ios: String; var build:
     @Published var showLogs = false
     @Published var action: String?
     let profileServer = ProfileServer()
+    private let keepAlive = KeepAlive()
+    private var background: UIBackgroundTaskIdentifier = .invalid
     let fm = FileManager.default
     var dataRoot: URL {
         var root = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("CarrierBackups", isDirectory: true)
@@ -59,11 +75,22 @@ struct CarrierReport: Decodable { var model: String; var ios: String; var build:
         try? logs.joined(separator: "\n").write(to: file, atomically: true, encoding: .utf8)
         if !line.hasPrefix("airlift:") { progress = line }
     }
+    private func endBackgroundTask() {
+        if background != .invalid { UIApplication.shared.endBackgroundTask(background); background = .invalid }
+    }
     func run(_ operation: String) {
         guard !busy else { return }; refresh()
         guard paired else { error = "請先完成配對或匯入配對檔"; return }
         busy = true; logs = []; progress = operation == "inspect" ? "正在讀取手機與雙卡設定…" : "正在準備備份與連線…"
         UIApplication.shared.isIdleTimerDisabled = true
+        if operation != "inspect" {
+            // A write briefly moves the carrier catalog out of place. Keep running if the app leaves the
+            // foreground (incoming call, lock button, app switch) so that move is not cut in half.
+            keepAlive.startAudio()
+            background = UIApplication.shared.beginBackgroundTask(withName: "CarrierOperation") { [weak self] in
+                MainActor.assumeIsolated { self?.endBackgroundTask() }
+            }
+        }
         let pair = PairingController.pairingFilePath(); let root = dataRoot.path
         let trigger = Bundle.main.url(forResource: "AVEA_tr", withExtension: "ipcc")!.path
         let context = Unmanaged.passRetained(self).toOpaque()
@@ -82,6 +109,7 @@ struct CarrierReport: Decodable { var model: String; var ios: String; var build:
             DispatchQueue.main.async {
                 Unmanaged<CarrierModel>.fromOpaque(context).release()
                 self.busy = false; UIApplication.shared.isIdleTimerDisabled = false
+                self.keepAlive.stopAudio(); self.endBackgroundTask()
                 if result == 0, let json, let data = json.data(using: .utf8), let value = try? JSONDecoder().decode(CarrierReport.self, from: data) {
                     self.report = value; self.checked = Date()
                     self.progress = operation == "inspect" ? "讀取完成" : operation == "recover" ? "中斷操作已復原" : "寫入、比對與重新載入完成"
@@ -123,9 +151,9 @@ struct MainView: View {
                     if let report = model.report {
                         ForEach(report.carriers) { row in
                             HStack {
-                                Text(row.title)
+                                Text(report.title(row))
                                 Spacer()
-                                Text(row.bundle.contains("KDDI_BIGLOBE") ? "修復設定" : "原生設定")
+                                Text(row.repaired ? "修復設定" : "原生設定")
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -133,9 +161,9 @@ struct MainView: View {
                     Button { model.run("inspect") } label: { Label("重新讀取", systemImage: "arrow.clockwise") }.disabled(model.busy)
                 }
                 Section("修復") {
-                    Button { model.action = "apply" } label: { Label("套用語音修復", systemImage: "wrench.and.screwdriver") }.disabled(model.busy || !model.paired)
+                    Button { model.action = "apply" } label: { Label("套用語音修復", systemImage: "wrench.and.screwdriver") }.disabled(model.busy || !model.paired || pairing.running)
                     Button { model.installProfile() } label: { Label("安裝描述檔", systemImage: "arrow.down.doc") }.disabled(model.busy)
-                    Button { model.action = "restore" } label: { Label("還原原生設定", systemImage: "arrow.uturn.backward") }.disabled(model.busy || !model.paired)
+                    Button { model.action = "restore" } label: { Label("還原原生設定", systemImage: "arrow.uturn.backward") }.disabled(model.busy || !model.paired || pairing.running)
                 }
                 Section {
                     DisclosureGroup("配對") {
@@ -150,12 +178,13 @@ struct MainView: View {
                     }
                     DisclosureGroup("進階") {
                         Button("操作紀錄") { model.showLogs = true }
-                        Button("復原中斷操作") { model.action = "recover" }.disabled(model.busy || !model.paired)
+                        Button("復原中斷操作") { model.action = "recover" }.disabled(model.busy || !model.paired || pairing.running)
                     }
                 }
             }
             .navigationTitle("ifmobile").navigationBarTitleDisplayMode(.inline)
             .onChange(of: phase) { _, phase in if phase == .active { model.refresh() } }
+            .onChange(of: pairing.running) { _, running in if !running { model.refresh() } }
             .fileImporter(isPresented: $model.importing, allowedContentTypes: [.data], allowsMultipleSelection: false) { r in if case .success(let urls) = r, let u = urls.first { model.importPair(u) } }
             .alert("操作結果", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) { Button("知道了", role: .cancel) {} } message: { Text(model.error ?? "") }
             .confirmationDialog(model.action == "restore" ? "還原日本卡" : model.action == "recover" ? "復原中斷操作" : "套用日本卡修復", isPresented: Binding(get: { model.action != nil }, set: { if !$0 { model.action = nil } }), titleVisibility: .visible) {

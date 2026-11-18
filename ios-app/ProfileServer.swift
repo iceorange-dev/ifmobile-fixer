@@ -21,7 +21,10 @@ import UIKit
             params.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
             let server = try NWListener(using: params)
             listener = server; delivered = false
-            background = UIApplication.shared.beginBackgroundTask(withName: "ProfileDownload") { [weak self] in Task { @MainActor in self?.stop() } }
+            background = UIApplication.shared.beginBackgroundTask(withName: "ProfileDownload") { [weak self] in
+                // The expiration handler must end the task before it returns, or iOS terminates the app.
+                MainActor.assumeIsolated { self?.stop() }
+            }
             var returned = false
             server.stateUpdateHandler = { [weak self] state in
                 MainActor.assumeIsolated {
@@ -52,19 +55,25 @@ import UIKit
             MainActor.assumeIsolated {
                 guard let self else { connection.cancel(); return }
                 var buffer = buffer; if let data { buffer.append(data) }
-                guard error == nil, buffer.count <= 16384 else { connection.cancel(); return }
+                guard error == nil, buffer.count <= 16384 else { self.drop(connection); return }
                 let request = String(decoding: buffer, as: UTF8.self)
                 guard request.contains("\r\n\r\n") else {
-                    if complete { connection.cancel() } else { self.receive(connection, buffer: buffer, path: path, payload: payload) }; return
+                    if complete { self.drop(connection) } else { self.receive(connection, buffer: buffer, path: path, payload: payload) }; return
                 }
                 let allowed = request.hasPrefix("GET \(path) HTTP/")
                 let body = allowed ? payload : Data("Not found".utf8)
                 let header = allowed ? "HTTP/1.1 200 OK\r\nContent-Type: application/x-apple-aspen-config\r\nContent-Disposition: attachment; filename=ifmobile-Roaming-Voice.mobileconfig\r\n" : "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\n"
                 var response = Data((header + "Content-Length: \(body.count)\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n").utf8); response.append(body)
-                connection.send(content: response, completion: .contentProcessed { _ in connection.cancel() })
+                connection.send(content: response, completion: .contentProcessed { _ in
+                    MainActor.assumeIsolated { self.drop(connection) }
+                })
                 self.delivered = self.delivered || allowed
             }
         }
+    }
+    /// Closes one connection and frees its slot, so the limit counts open connections, not every one ever made.
+    private func drop(_ connection: NWConnection) {
+        connection.cancel(); connections.removeAll { $0 === connection }
     }
     func stop() {
         expiry?.cancel(); expiry = nil; listener?.cancel(); listener = nil

@@ -55,6 +55,9 @@ impl ALPairResult {
     }
 }
 
+/// Upper bound for each waiting phase of one pairing run.
+const PAIR_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
 // Callbacks carry raw pointers; the Swift side ensures they outlive the call.
 struct Cbs {
     ready: ALPairReadyCb,
@@ -164,9 +167,11 @@ async fn async_run_host(
     emit_ready(&cbs, &service_id, bound_port, &host_info);
 
     tracing::info!("RPPairing: waiting for device on port {bound_port}…");
-    let (stream, peer_addr) = listener
-        .accept()
+    // Without a limit an abandoned pairing would block this thread, and the
+    // app's background keep-alive, forever.
+    let (stream, peer_addr) = tokio::time::timeout(PAIR_TIMEOUT, listener.accept())
         .await
+        .map_err(|_| "配對逾時：沒有裝置連線，請重新建立配對".to_string())?
         .map_err(|e| format!("accept failed: {e}"))?;
     tracing::info!("RPPairing: device connected from {peer_addr}");
 
@@ -177,7 +182,7 @@ async fn async_run_host(
     let pin_cb = cbs.pin;
     let pin_ctx = cbs.ctx;
 
-    let peer_info = host
+    let handshake = host
         .accept(&mut pairing_file, move |pin| {
             let pin_cb = pin_cb;
             let pin_ctx = pin_ctx;
@@ -189,8 +194,10 @@ async fn async_run_host(
                     }
                 }
             }
-        })
+        });
+    let peer_info = tokio::time::timeout(PAIR_TIMEOUT, handshake)
         .await
+        .map_err(|_| "配對逾時：未在時限內完成 PIN 驗證，請重新建立配對".to_string())?
         .map_err(|e| format!("pairing failed: {e}"))?;
     tracing::info!(
         "RPPairing: handshake complete — {} ({})",
